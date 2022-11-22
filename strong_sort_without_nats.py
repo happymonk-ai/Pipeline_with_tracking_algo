@@ -20,8 +20,8 @@ from track import run
 import sys
 import gi
 gi.require_version('Gst', '1.0')
-from gi.repository import Gst
-Gst.init(None)
+from gi.repository import Gst, GObject, GLib
+
 from io import BytesIO
 import os
 from dotenv import load_dotenv
@@ -93,6 +93,8 @@ video_model = slow_r50_detection(True) # Another option is slowfast_r50_detectio
 video_model = video_model.eval().to(device)
 
 # gstreamer
+# Initializes Gstreamer, it's variables, paths
+Gst.init(sys.argv)
 image_arr = None
 device_types = ['', 'h.264', 'h.264', 'h.264', 'h.265', 'h.265', 'h.264']
 load_dotenv()
@@ -551,55 +553,69 @@ async def gst_stream(device_id, location, device_type):
         ret = pipeline.set_state(Gst.State.PLAYING)
         if ret == Gst.StateChangeReturn.FAILURE:
             print("Unable to set the pipeline to the playing state.")
-        # Wait until error or EOS
-        bus = pipeline.get_bus()
-        
-        # Parse message
-        while True:
-            message = bus.timed_pop_filtered(10000, Gst.MessageType.ANY)
-                
-            if message:
-                if message.type == Gst.MessageType.ERROR:
-                    err, debug = message.parse_error()
-                    print(("Error received from element %s: %s" % (
-                        message.src.get_name(), err)))
-                    print(("Debugging information: %s" % debug))
-                    break
-                elif message.type == Gst.MessageType.EOS:
-                    print("End-Of-Stream reached.")
-                    break
-                elif message.type == Gst.MessageType.STATE_CHANGED:
-                    if isinstance(message.src, Gst.Pipeline):
-                        old_state, new_state, pending_state = message.parse_state_changed()
-                        print(("Pipeline state changed from %s to %s." %
-                        (old_state.value_nick, new_state.value_nick)))
-                # else:
-                #     print("Waiting...")
 
     except TypeError as e:
         print(TypeError," gstreamer streaming error >> ", e)
-        # Free resources
-        pipeline.set_state(Gst.State.NULL)
 
+def on_message(bus: Gst.Bus, message: Gst.Message, loop: GLib.MainLoop):
+    mtype = message.type
+    """
+        Gstreamer Message Types and how to parse
+        https://lazka.github.io/pgi-docs/Gst-1.0/flags.html#Gst.MessageType
+    """
+    if mtype == Gst.MessageType.EOS:
+        print("End of stream")
+        loop.quit()
+
+    elif mtype == Gst.MessageType.ERROR:
+        err, debug = message.parse_error()
+        print(("Error received from element %s: %s" % (
+            message.src.get_name(), err)))
+        print(("Debugging information: %s" % debug))
+        loop.quit()
+
+    elif mtype == Gst.MessageType.STATE_CHANGED:
+        if isinstance(message.src, Gst.Pipeline):
+            old_state, new_state, pending_state = message.parse_state_changed()
+            print(("Pipeline state changed from %s to %s." %
+            (old_state.value_nick, new_state.value_nick)))
+    return True
 
 async def main():
+    
+    pipeline = Gst.parse_launch('fakesrc ! queue ! fakesink')
 
-    # device_id = "1"
-    # stream_url = "rtsp://happymonk:admin123@streams.ckdr.co.in:3554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif"
-    # device_type = "h.264"
+    # Init GObject loop to handle Gstreamer Bus Events
+    loop = GLib.MainLoop()
+
+    bus = pipeline.get_bus()
+    # allow bus to emit messages to main thread
+    bus.add_signal_watch()
+
+    # Add handler to specific signal
+    bus.connect("message", on_message, loop)
+
+    # Start pipeline
+    pipeline.set_state(Gst.State.PLAYING)
+
     for i in range(1, 7):
-        try:
-            stream_url = os.getenv('RTSP_URL_{id}'.format(id=i))
-            t = Process(target= await gst_stream(device_id=i ,location=stream_url, device_type=device_types[i]))
-            t.start()
-            # await asyncio.sleep(1)
-        except TypeError as e:
-            print(TypeError," gstreamer error >> ", e)
+        stream_url = os.getenv('RTSP_URL_{id}'.format(id=i))
+        t = Process(target= await gst_stream(device_id=i ,location=stream_url, device_type=device_types[i]))
+        t.start()
+    
+    try:
+        loop.run()
+    except Exception:
+        traceback.print_exc()
+        loop.quit()
 
     # nc = await nats.connect(servers=["nats://216.48.181.154:5222"] , reconnect_time_wait= 50 ,allow_reconnect=True, connect_timeout=20, max_reconnect_attempts=60)
     # js = nc.jetstream()
     # await js.subscribe("streams.*.frames", cb=cb, stream="device_stream_1" , idle_heartbeat = 2)
-    
+
+    # Stop Pipeline
+    pipeline.set_state(Gst.State.NULL)
+    del pipeline
     
 async def checkstatus():
     check_requirements_pipeline() 
@@ -614,7 +630,6 @@ if __name__ == '__main__':
     except RuntimeError as e:
         print("error ", e)
         print(torch.cuda.memory_summary(device=None, abbreviated=False), "cuda")
-        
         
 """
 Json Object For a Batch Video 
