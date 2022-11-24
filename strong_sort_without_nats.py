@@ -8,8 +8,9 @@ from PIL import Image
 import cv2
 import glob
 from nanoid import generate
-from multiprocessing import Process
+from multiprocessing import Process, Queue
 import torch
+import torchvision.transforms as T
 from general import (check_requirements_pipeline)
 import logging 
 import threading
@@ -117,129 +118,129 @@ device = 'cuda' # or 'cpu'
 video_model = slow_r50_detection(True) # Another option is slowfast_r50_detection
 video_model = video_model.eval().to(device)
 
-model = ResNet50(weights = 'imagenet', include_top = True)
+# model = ResNet50(weights = 'imagenet', include_top = True)
 
-NL = 2 # No. of layers to be processed
+# NL = 2 # No. of layers to be processed
 
-print('Total', NL, ' layers used')
+# print('Total', NL, ' layers used')
 
 
-# gallery_path = '/mnt/c/Users/priya/Documents/Happymonk work/ReID and Track/Codes/testing_folder_face/testing_folder_face/similarity_test/gallery'
-gallery_path = '/home/nivetheni/ReID_code_1/gallery'
-# count = 0
-classifier_list = []  
-pca_list = [] 
-# Y_list = []
-for i in range(NL): #NL
-    file_id = []
-    filepath = []
-    filename_list = []
-    feature_list = []
-    target = []
+# # gallery_path = '/mnt/c/Users/priya/Documents/Happymonk work/ReID and Track/Codes/testing_folder_face/testing_folder_face/similarity_test/gallery'
+# gallery_path = '/home/nivetheni/ReID_code_1/gallery'
+# # count = 0
+# classifier_list = []  
+# pca_list = [] 
+# # Y_list = []
+# for i in range(NL): #NL
+#     file_id = []
+#     filepath = []
+#     filename_list = []
+#     feature_list = []
+#     target = []
     
-    for file in os.listdir(gallery_path):
-        if file.endswith('jpg'):
-            # count+=1
-            filename = file.split('.')[0]
-            # print(filename[0])
-            file = os.path.join(gallery_path, file)
-            file_id.append(filename[0])
-            filepath.append(file)
-            filename_list.append(filename)
-    file_id_unique = list(set(file_id))
-    # layer_name = filename + '_layer_' + str(i)
+#     for file in os.listdir(gallery_path):
+#         if file.endswith('jpg'):
+#             # count+=1
+#             filename = file.split('.')[0]
+#             # print(filename[0])
+#             file = os.path.join(gallery_path, file)
+#             file_id.append(filename[0])
+#             filepath.append(file)
+#             filename_list.append(filename)
+#     file_id_unique = list(set(file_id))
+#     # layer_name = filename + '_layer_' + str(i)
 
-    # layer_path = os.path.join(query_path, layer_name)
-    # if not os.path.exists(layer_path):
-    #     os.makedirs(layer_path)
-    print('Layer No.: ', i)
-    model_layer = Model(inputs = model.inputs, outputs = model.layers[i].output)
-    # Extracting our features
-    for item1 in file_id_unique:
-        # print(item1)
-        while True:
-            # print(file_id, item1)
-            try:
-                # print(item1)
-                index = file_id.index(item1)
-                # if index is not None:
-                file_id[index] = '-1'
-                file = filepath[index] 
-                filename = filename_list[index]
-                layer_name = filename + '_layer_' + str(i)
-                layer_path = os.path.join(gallery_path, layer_name)
-                # if not os.path.exists(layer_path): # Uncomment these two lines for feature visualization 
-                #     os.makedirs(layer_path)                      
-                image1 = cv2.imread(file)
-                image2 = cv2.cvtColor(image1, cv.COLOR_BGR2RGB)
-                # Resize image to 224x224 size
-                image3 = cv2.resize(image2, (224, 224)).reshape(-1, 224, 224, 3)
-                # We need to preprocess imageto fulfill ResNet50 requirements
-                image = preprocess_input(image3)
+#     # layer_path = os.path.join(query_path, layer_name)
+#     # if not os.path.exists(layer_path):
+#     #     os.makedirs(layer_path)
+#     print('Layer No.: ', i)
+#     model_layer = Model(inputs = model.inputs, outputs = model.layers[i].output)
+#     # Extracting our features
+#     for item1 in file_id_unique:
+#         # print(item1)
+#         while True:
+#             # print(file_id, item1)
+#             try:
+#                 # print(item1)
+#                 index = file_id.index(item1)
+#                 # if index is not None:
+#                 file_id[index] = '-1'
+#                 file = filepath[index] 
+#                 filename = filename_list[index]
+#                 layer_name = filename + '_layer_' + str(i)
+#                 layer_path = os.path.join(gallery_path, layer_name)
+#                 # if not os.path.exists(layer_path): # Uncomment these two lines for feature visualization 
+#                 #     os.makedirs(layer_path)                      
+#                 image1 = cv2.imread(file)
+#                 image2 = cv2.cvtColor(image1, cv.COLOR_BGR2RGB)
+#                 # Resize image to 224x224 size
+#                 image3 = cv2.resize(image2, (224, 224)).reshape(-1, 224, 224, 3)
+#                 # We need to preprocess imageto fulfill ResNet50 requirements
+#                 image = preprocess_input(image3)
 
-                features = model_layer.predict(image)
-                # print(features.shape,"feature shape")
-                n_features = features.shape[-1]
-                # print(n_features, 'No. of features')
+#                 features = model_layer.predict(image)
+#                 # print(features.shape,"feature shape")
+#                 n_features = features.shape[-1]
+#                 # print(n_features, 'No. of features')
 
-                for item in range(n_features):
-                    # print(item, 'Line 83')
-                    # try:
-                    img = features[0, :, :, item]
-                    mean, std = img.mean(), img.std()
-                    # print(mean, std, 'Mean and Standard deviation')
-                    if std==0.0:
-                        # print('Std Dev 0 was encountered')
-                        continue
-                    img = (img - mean)/std
-                    # clip pixel values to [-1,1]
-                    img = np.clip(img, -1.0, 1.0)
-                    # shift from [-1,1] to [0,1] with 0.5 mean
-                    img = 255*(img + 1.0) / 2.0
-                    # confirm it had the desired effect
-                    mean, std = img.mean(), img.std()
-                    # print(img, "positive global feature image")
-                    layer_feature_file = os.path.join(layer_path, str(item))
-                    # print(layer_feature_file + '.jpg')
-                    # cv2.imwrite(layer_feature_file + '.jpg', img)
-                    (row,col) = img.shape
-                    img = np.reshape(img, row*col)
-                    feature_list.append(img)
-                    # print(filename[0])
-                    # target.append(filename[0])
-                    target.append(item1)
+#                 for item in range(n_features):
+#                     # print(item, 'Line 83')
+#                     # try:
+#                     img = features[0, :, :, item]
+#                     mean, std = img.mean(), img.std()
+#                     # print(mean, std, 'Mean and Standard deviation')
+#                     if std==0.0:
+#                         # print('Std Dev 0 was encountered')
+#                         continue
+#                     img = (img - mean)/std
+#                     # clip pixel values to [-1,1]
+#                     img = np.clip(img, -1.0, 1.0)
+#                     # shift from [-1,1] to [0,1] with 0.5 mean
+#                     img = 255*(img + 1.0) / 2.0
+#                     # confirm it had the desired effect
+#                     mean, std = img.mean(), img.std()
+#                     # print(img, "positive global feature image")
+#                     layer_feature_file = os.path.join(layer_path, str(item))
+#                     # print(layer_feature_file + '.jpg')
+#                     # cv2.imwrite(layer_feature_file + '.jpg', img)
+#                     (row,col) = img.shape
+#                     img = np.reshape(img, row*col)
+#                     feature_list.append(img)
+#                     # print(filename[0])
+#                     # target.append(filename[0])
+#                     target.append(item1)
 
-            except ValueError as e:
-                # print(e)
-                break
-    feature_list = np.array(feature_list)
-    target = np.array(target)
-    # target = np.reshape(target,(len(target),1)) 
-    print(np.shape(feature_list), np.shape(target), 'Shapes of feature list and target')
-    # define ordinal encoding
-    # encoder = OrdinalEncoder()
-    encoder = LabelEncoder()
-    # encoder = OneHotEncoder(sparse = False)
-    Y = encoder.fit_transform(target)
-    Y = np.reshape(Y,(len(Y),))
-    print(np.shape(Y))
-    # print(Y)
+#             except ValueError as e:
+#                 # print(e)
+#                 break
+#     feature_list = np.array(feature_list)
+#     target = np.array(target)
+#     # target = np.reshape(target,(len(target),1)) 
+#     print(np.shape(feature_list), np.shape(target), 'Shapes of feature list and target')
+#     # define ordinal encoding
+#     # encoder = OrdinalEncoder()
+#     encoder = LabelEncoder()
+#     # encoder = OneHotEncoder(sparse = False)
+#     Y = encoder.fit_transform(target)
+#     Y = np.reshape(Y,(len(Y),))
+#     print(np.shape(Y))
+#     # print(Y)
 
-    X_train, X_test, y_train, y_test = train_test_split(feature_list, Y)
-    pca = PCA().fit(X_train)
-    n_comp_hold = np.where(pca.explained_variance_ratio_.cumsum() > 0.95)
-    n_comp_list = list(n_comp_hold)
-    n_comp = len(n_comp_list[0])
-    # n_comp = len(np.where(pca.explained_variance_ratio_.cumsum() > 0.95))
-    print(n_comp, 'No. of PCA components > 95%')
-    pca = PCA(n_components = n_comp).fit(X_train)
-    X_train_pca = pca.transform(X_train)
-    classifier = SVC(probability=True).fit(X_train_pca, y_train)
-    X_test_pca = pca.transform(X_test)
-    predictions = classifier.predict(X_test_pca)
-    print(classification_report(y_test, predictions))
-    classifier_list.append(classifier)
-    pca_list.append(pca)
+#     X_train, X_test, y_train, y_test = train_test_split(feature_list, Y)
+#     pca = PCA().fit(X_train)
+#     n_comp_hold = np.where(pca.explained_variance_ratio_.cumsum() > 0.95)
+#     n_comp_list = list(n_comp_hold)
+#     n_comp = len(n_comp_list[0])
+#     # n_comp = len(np.where(pca.explained_variance_ratio_.cumsum() > 0.95))
+#     print(n_comp, 'No. of PCA components > 95%')
+#     pca = PCA(n_components = n_comp).fit(X_train)
+#     X_train_pca = pca.transform(X_train)
+#     classifier = SVC(probability=True).fit(X_train_pca, y_train)
+#     X_test_pca = pca.transform(X_test)
+#     predictions = classifier.predict(X_test_pca)
+#     print(classification_report(y_test, predictions))
+#     classifier_list.append(classifier)
+#     pca_list.append(pca)
 
 # gstreamer
 # Initializes Gstreamer, it's variables, paths
@@ -385,15 +386,13 @@ async def Activity(source,device_id,source_1):
                 inp_img = inp_img.permute(1,2,0)
                 
                 # Predicted boxes are of the form List[(x_1, y_1, x_2, y_2)]
-                predicted_boxes = await get_person_bboxes(inp_img, predictor)
+                predicted_boxes = await get_person_bboxes(inp_img, predictor) 
                 if len(predicted_boxes) == 0: 
                     print("Skipping clip no frames detected at time stamp: ", time_stamp)
                     continue
                     
                 # Preprocess clip and bounding boxes for video action recognition.
                 inputs, inp_boxes, _ = await ava_inference_transform(inp_imgs, predicted_boxes.numpy())
-                num_arr = inputs.numpy() 
-                print(num_arr)
                 # Prepend data sample id for each bounding box. 
                 # For more details refere to the RoIAlign in Detectron2
                 inp_boxes = torch.cat([torch.zeros(inp_boxes.shape[0],1), inp_boxes], dim=1)
@@ -429,7 +428,14 @@ async def Activity(source,device_id,source_1):
                     video.write(img)
                 video.release()
                 await asyncio.sleep(1)
-                Process(target= run(source=vide_save_path)).start()
+                queue1 = Queue()
+                queue2 = Queue()
+                process = Process(target= run(vide_save_path, queue1, queue2))
+                process.start()
+                value1 = queue1.get()
+                value2 = queue2.get()
+                avg_Batchcount_person.append(value1)
+                avg_Batchcount_vehicel.append(value2)
 
             except IndexError:
                 print("No Activity")

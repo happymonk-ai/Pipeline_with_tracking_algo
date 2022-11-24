@@ -14,6 +14,7 @@ import numpy as np
 from pathlib import Path
 import torch
 import torch.backends.cudnn as cudnn
+from math import ceil
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # yolov5 strongsort root directory
@@ -47,9 +48,20 @@ model = DetectMultiBackend(WEIGHTS / '27Sep_2022.pt', device=devices, dnn=False,
 stride, names, pt = model.stride, model.names, model.pt
 imgsz = check_img_size((640, 640), s=stride)  # check image size
 
+person_count = []
+vehicle_count = []
+avg_Batchcount_person =[]
+avg_Batchcount_vehicel = []
+track_person = []
+track_vehicle = []
+batch_person_id = []
+detect_count = []
+
 @torch.no_grad()
 def run(
-        source=ROOT,
+        source,
+        queue1,
+        queue2,
         yolo_weights=WEIGHTS / '27Sep_2022.pt',  # model.pt path(s),
         reid_weights=WEIGHTS / 'osnet_x0_25_msmt17.pt',  # model.pt path,
         tracking_method='strongsort',
@@ -164,8 +176,16 @@ def run(
 
                 # Print results
                 for c in det[:, -1].unique():
+                    global vehicle_count , license
                     n = (det[:, -1] == c).sum()  # detections per class
                     s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
+                    if names[int(c)] == "Person" :
+                        print(f"{n}","line 338")
+                        person_count.append(int(f"{n}"))
+                        print("person detected")
+                    if names[int(c)] == "Vehicle":
+                       vehicle_count.append(int(f"{n}"))
+                       print("vehicel detected")
 
                 # pass detections to strongsort
                 t4 = time_sync()
@@ -213,6 +233,8 @@ def run(
            
             # Save results (image with detections)
             if save_vid:
+                if dataset.mode == 'image':
+                    cv2.imwrite(save_path, im0)
                 if vid_path[i] != save_path:  # new video
                     vid_path[i] = save_path
                     if isinstance(vid_writer[i], cv2.VideoWriter):
@@ -228,6 +250,54 @@ def run(
                 vid_writer[i].write(im0)
 
             prev_frames[i] = curr_frames[i]
+
+            # Print time (inference-only)
+        LOGGER.info(f'{s}Done. ({t3 - t2:.3f}s)')
+        
+    #people Count
+    sum_count = 0
+    for x in person_count:
+        sum_count += int(x)
+        # if int(x) % 2 == 0:
+        #     track_person.append(0)
+        # else:
+        #     track_person.append(1)
+    try :
+        avg = ceil(sum_count/len(person_count))
+        avg_Batchcount_person.append(str(avg))
+    except ZeroDivisionError:
+        avg_Batchcount_person.append("0")
+        print("No person found ")
+        
+    for iten in avg_Batchcount_person:
+        for i in range(int(iten[0])):
+            track_person.append("1")
+        
+    sum_count = 0
+    for x in vehicle_count:
+        sum_count += int(x)
+        # if int(x) % 2 == 0:
+        #     track_vehicle.append(0)
+        # else:
+        #     track_vehicle.append(1)
+    try :
+        avg = ceil(sum_count/len(vehicle_count))
+        avg_Batchcount_vehicel.append(str(avg))
+    except ZeroDivisionError:
+        avg_Batchcount_vehicel.append("0")
+        print("No Vehicle found ")
+    
+    for iten in avg_Batchcount_vehicel:
+        for i in range(int(iten[0])):
+            track_vehicle.append("1")
+        
+    if len(person_count) > 0 or len(vehicle_count) > 0 :
+        detect_count.append(1)
+    else:
+        detect_count.append(0)
+
+    queue1.put(avg_Batchcount_person)
+    queue2.put(avg_Batchcount_vehicel)
 
     # Print results
     t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
