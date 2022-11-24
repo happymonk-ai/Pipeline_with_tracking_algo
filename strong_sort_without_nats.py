@@ -51,6 +51,31 @@ from pytorchvideo.models.hub import slow_r50_detection # Another option is slowf
 from visualization import VideoVisualizer 
 import gc
 
+#re-id
+import cv2 as cv
+import matplotlib.pyplot as plt
+
+from matplotlib import gridspec
+
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.utils.np_utils import to_categorical
+
+from keras.applications.resnet import ResNet50 
+#from keras.applications.resnet50 import preprocess_input
+from keras.applications.resnet import preprocess_input 
+from keras.preprocessing.image import img_to_array
+from keras.preprocessing.image import load_img
+from keras.callbacks import ModelCheckpoint
+from keras.models import Model
+from sklearn.utils import shuffle
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+from sklearn.svm import SVC
+from sklearn.model_selection import train_test_split
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder, LabelEncoder
+from collections import Counter
+
 # # face_detection
 # import lmdb
 
@@ -91,6 +116,130 @@ batch_person_id = []
 device = 'cuda' # or 'cpu'
 video_model = slow_r50_detection(True) # Another option is slowfast_r50_detection
 video_model = video_model.eval().to(device)
+
+model = ResNet50(weights = 'imagenet', include_top = True)
+
+NL = 2 # No. of layers to be processed
+
+print('Total', NL, ' layers used')
+
+
+# gallery_path = '/mnt/c/Users/priya/Documents/Happymonk work/ReID and Track/Codes/testing_folder_face/testing_folder_face/similarity_test/gallery'
+gallery_path = '/home/nivetheni/ReID_code_1/gallery'
+# count = 0
+classifier_list = []  
+pca_list = [] 
+# Y_list = []
+for i in range(NL): #NL
+    file_id = []
+    filepath = []
+    filename_list = []
+    feature_list = []
+    target = []
+    
+    for file in os.listdir(gallery_path):
+        if file.endswith('jpg'):
+            # count+=1
+            filename = file.split('.')[0]
+            # print(filename[0])
+            file = os.path.join(gallery_path, file)
+            file_id.append(filename[0])
+            filepath.append(file)
+            filename_list.append(filename)
+    file_id_unique = list(set(file_id))
+    # layer_name = filename + '_layer_' + str(i)
+
+    # layer_path = os.path.join(query_path, layer_name)
+    # if not os.path.exists(layer_path):
+    #     os.makedirs(layer_path)
+    print('Layer No.: ', i)
+    model_layer = Model(inputs = model.inputs, outputs = model.layers[i].output)
+    # Extracting our features
+    for item1 in file_id_unique:
+        # print(item1)
+        while True:
+            # print(file_id, item1)
+            try:
+                # print(item1)
+                index = file_id.index(item1)
+                # if index is not None:
+                file_id[index] = '-1'
+                file = filepath[index] 
+                filename = filename_list[index]
+                layer_name = filename + '_layer_' + str(i)
+                layer_path = os.path.join(gallery_path, layer_name)
+                # if not os.path.exists(layer_path): # Uncomment these two lines for feature visualization 
+                #     os.makedirs(layer_path)                      
+                image1 = cv2.imread(file)
+                image2 = cv2.cvtColor(image1, cv.COLOR_BGR2RGB)
+                # Resize image to 224x224 size
+                image3 = cv2.resize(image2, (224, 224)).reshape(-1, 224, 224, 3)
+                # We need to preprocess imageto fulfill ResNet50 requirements
+                image = preprocess_input(image3)
+
+                features = model_layer.predict(image)
+                # print(features.shape,"feature shape")
+                n_features = features.shape[-1]
+                # print(n_features, 'No. of features')
+
+                for item in range(n_features):
+                    # print(item, 'Line 83')
+                    # try:
+                    img = features[0, :, :, item]
+                    mean, std = img.mean(), img.std()
+                    # print(mean, std, 'Mean and Standard deviation')
+                    if std==0.0:
+                        # print('Std Dev 0 was encountered')
+                        continue
+                    img = (img - mean)/std
+                    # clip pixel values to [-1,1]
+                    img = np.clip(img, -1.0, 1.0)
+                    # shift from [-1,1] to [0,1] with 0.5 mean
+                    img = 255*(img + 1.0) / 2.0
+                    # confirm it had the desired effect
+                    mean, std = img.mean(), img.std()
+                    # print(img, "positive global feature image")
+                    layer_feature_file = os.path.join(layer_path, str(item))
+                    # print(layer_feature_file + '.jpg')
+                    # cv2.imwrite(layer_feature_file + '.jpg', img)
+                    (row,col) = img.shape
+                    img = np.reshape(img, row*col)
+                    feature_list.append(img)
+                    # print(filename[0])
+                    # target.append(filename[0])
+                    target.append(item1)
+
+            except ValueError as e:
+                # print(e)
+                break
+    feature_list = np.array(feature_list)
+    target = np.array(target)
+    # target = np.reshape(target,(len(target),1)) 
+    print(np.shape(feature_list), np.shape(target), 'Shapes of feature list and target')
+    # define ordinal encoding
+    # encoder = OrdinalEncoder()
+    encoder = LabelEncoder()
+    # encoder = OneHotEncoder(sparse = False)
+    Y = encoder.fit_transform(target)
+    Y = np.reshape(Y,(len(Y),))
+    print(np.shape(Y))
+    # print(Y)
+
+    X_train, X_test, y_train, y_test = train_test_split(feature_list, Y)
+    pca = PCA().fit(X_train)
+    n_comp_hold = np.where(pca.explained_variance_ratio_.cumsum() > 0.95)
+    n_comp_list = list(n_comp_hold)
+    n_comp = len(n_comp_list[0])
+    # n_comp = len(np.where(pca.explained_variance_ratio_.cumsum() > 0.95))
+    print(n_comp, 'No. of PCA components > 95%')
+    pca = PCA(n_components = n_comp).fit(X_train)
+    X_train_pca = pca.transform(X_train)
+    classifier = SVC(probability=True).fit(X_train_pca, y_train)
+    X_test_pca = pca.transform(X_test)
+    predictions = classifier.predict(X_test_pca)
+    print(classification_report(y_test, predictions))
+    classifier_list.append(classifier)
+    pca_list.append(pca)
 
 # gstreamer
 # Initializes Gstreamer, it's variables, paths
@@ -236,13 +385,15 @@ async def Activity(source,device_id,source_1):
                 inp_img = inp_img.permute(1,2,0)
                 
                 # Predicted boxes are of the form List[(x_1, y_1, x_2, y_2)]
-                predicted_boxes = await get_person_bboxes(inp_img, predictor) 
+                predicted_boxes = await get_person_bboxes(inp_img, predictor)
                 if len(predicted_boxes) == 0: 
                     print("Skipping clip no frames detected at time stamp: ", time_stamp)
                     continue
                     
                 # Preprocess clip and bounding boxes for video action recognition.
                 inputs, inp_boxes, _ = await ava_inference_transform(inp_imgs, predicted_boxes.numpy())
+                num_arr = inputs.numpy() 
+                print(num_arr)
                 # Prepend data sample id for each bounding box. 
                 # For more details refere to the RoIAlign in Detectron2
                 inp_boxes = torch.cat([torch.zeros(inp_boxes.shape[0],1), inp_boxes], dim=1)
@@ -511,8 +662,8 @@ async def gst_data(device_id ,frame_byte, timestamp):
     # logging.error("The program encountered an error")
     # logging.critical("The program crashed")
 
-async def gst_stream(device_id, location, device_type):
-
+# async def gst_stream(device_id, location, device_type):
+async def gst_stream(device_id, location):
     def gst_to_opencv(sample):
         buf = sample.get_buffer()
         caps = sample.get_caps()
@@ -536,10 +687,11 @@ async def gst_stream(device_id, location, device_type):
         return Gst.FlowReturn.OK
 
     try:
-        if(device_type == "h.264"):
-            pipeline = Gst.parse_launch('rtspsrc location={location} name={device_id} ! queue max-size-buffers=2 ! rtph264depay name=depay-{device_id} ! h264parse name=parse-{device_id} ! decodebin name=decode-{device_id} ! videoconvert name=convert-{device_id} ! videoscale name=scale-{device_id} ! video/x-raw, format=GRAY8, width = 512, height = 512 ! appsink name=sink-{device_id}'.format(location=location, device_id=device_id))
-        elif(device_type == "h.265"):
-            pipeline = Gst.parse_launch('rtspsrc location={location} name={device_id} ! queue max-size-buffers=2 ! rtph265depay name=depay-{device_id} ! h265parse name=parse-{device_id} ! decodebin name=decode-{device_id} ! videoconvert name=convert-{device_id} ! videoscale name=scale-{device_id} ! video/x-raw, format=GRAY8, width = 512, height = 512 ! appsink name=sink-{device_id}'.format(location=location, device_id=device_id))
+        pipeline = Gst.parse_launch('filesrc location={location} name={device_id} ! decodebin name=decode-{device_id} ! videoconvert name=convert-{device_id} ! videoscale name=scale-{device_id} ! video/x-raw, format=GRAY8, width = 1024, height = 1024 ! appsink name=sink-{device_id}'.format(location=location, device_id=device_id))
+        # if(device_type == "h.264"):
+        #     pipeline = Gst.parse_launch('rtspsrc location={location} name={device_id} ! queue max-size-buffers=2 ! rtph264depay name=depay-{device_id} ! h264parse name=parse-{device_id} ! decodebin name=decode-{device_id} ! videoconvert name=convert-{device_id} ! videoscale name=scale-{device_id} ! video/x-raw, format=GRAY8, width = 512, height = 512 ! appsink name=sink-{device_id}'.format(location=location, device_id=device_id))
+        # elif(device_type == "h.265"):
+        #     pipeline = Gst.parse_launch('rtspsrc location={location} name={device_id} ! queue max-size-buffers=2 ! rtph265depay name=depay-{device_id} ! h265parse name=parse-{device_id} ! decodebin name=decode-{device_id} ! videoconvert name=convert-{device_id} ! videoscale name=scale-{device_id} ! video/x-raw, format=GRAY8, width = 512, height = 512 ! appsink name=sink-{device_id}'.format(location=location, device_id=device_id))
 
         sink = pipeline.get_by_name('sink-{device_id}'.format(device_id=device_id))
 
@@ -582,6 +734,16 @@ def on_message(bus: Gst.Bus, message: Gst.Message, loop: GLib.MainLoop):
     return True
 
 async def main():
+    # data = "1"
+    # timestamp = 1234
+    # vidcap = cv2.VideoCapture('gray_scale.mp4')
+    # success, image = vidcap.read()
+    # count = 0
+    # while success:
+    #     success,image = vidcap.read()
+    #     await gst_data(device_id=data ,frame_byte=image, timestamp=timestamp)
+    #     # print('Read a new frame: ', image)
+    #     count += 1
     
     pipeline = Gst.parse_launch('fakesrc ! queue ! fakesink')
 
@@ -598,10 +760,17 @@ async def main():
     # Start pipeline
     pipeline.set_state(Gst.State.PLAYING)
 
-    for i in range(1, 7):
-        stream_url = os.getenv('RTSP_URL_{id}'.format(id=i))
-        t = Process(target= await gst_stream(device_id=i ,location=stream_url, device_type=device_types[i]))
-        t.start()
+    i = "1"
+    stream_url = '/home/nivetheni/Datascienc_pipeline_strongsort/gray_scale.mp4'
+
+    # t = Process(target= await gst_stream(device_id=i ,location=stream_url, device_type=device_types[i]))
+    t = Process(target= await gst_stream(device_id=i ,location=stream_url))
+    t.start()
+
+    # for i in range(1, 7):
+    #     stream_url = os.getenv('RTSP_URL_{id}'.format(id=i))
+    #     t = Process(target= await gst_stream(device_id=i ,location=stream_url, device_type=device_types[i]))
+    #     t.start()
     
     try:
         loop.run()

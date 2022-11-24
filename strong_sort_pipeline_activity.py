@@ -456,10 +456,17 @@ async def cb(msg):
         
 
 async def main():
-    nc = await nats.connect(servers=["nats://216.48.181.154:5222"] , reconnect_time_wait= 50 ,allow_reconnect=True, connect_timeout=20, max_reconnect_attempts=60)
-    js = nc.jetstream()
-    await js.subscribe("stream.*.frame", cb=cb, stream="device_stream" , idle_heartbeat = 2)
-    await js.subscribe("stream.*.frame", cb=cb ,stream="device_stream" ,idle_heartbeat = 2)
+    vidcap = cv2.VideoCapture('Office_front_view.mp4')
+    success, image = vidcap.read()
+    count = 0
+    while success:
+        success,image = vidcap.read()
+        print('Read a new frame: ', success)
+        count += 1
+    # nc = await nats.connect(servers=["nats://216.48.181.154:5222"] , reconnect_time_wait= 50 ,allow_reconnect=True, connect_timeout=20, max_reconnect_attempts=60)
+    # js = nc.jetstream()
+    # await js.subscribe("stream.*.frame", cb=cb, stream="device_stream" , idle_heartbeat = 2)
+    # await js.subscribe("stream.*.frame", cb=cb ,stream="device_stream" ,idle_heartbeat = 2)
     
 async def checkstatus():
     check_requirements_pipeline() 
