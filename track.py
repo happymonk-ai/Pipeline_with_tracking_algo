@@ -15,6 +15,33 @@ from pathlib import Path
 import torch
 import torch.backends.cudnn as cudnn
 from math import ceil
+from PIL import Image
+
+import numpy as np
+import cv2 as cv
+import matplotlib.pyplot as plt
+
+from matplotlib import gridspec
+
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.utils.np_utils import to_categorical
+
+from keras.applications.resnet import ResNet50 
+#from keras.applications.resnet50 import preprocess_input
+from keras.applications.resnet import preprocess_input 
+from keras.preprocessing.image import img_to_array
+from keras.preprocessing.image import load_img
+from keras.callbacks import ModelCheckpoint
+from keras.models import Model
+from sklearn.utils import shuffle
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+from sklearn.svm import SVC
+from sklearn.model_selection import train_test_split
+from sklearn.decomposition import PCA
+import cv2
+from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder, LabelEncoder
+from collections import Counter
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # yolov5 strongsort root directory
@@ -48,6 +75,130 @@ model = DetectMultiBackend(WEIGHTS / '27Sep_2022.pt', device=devices, dnn=False,
 stride, names, pt = model.stride, model.names, model.pt
 imgsz = check_img_size((640, 640), s=stride)  # check image size
 
+# face-id model
+model_1 = ResNet50(weights = 'imagenet', include_top = True)
+
+NL = 2 # No. of layers to be processed
+
+print('Total', NL, ' layers used')
+
+gallery_path = './gallery'
+# count = 0
+classifier_list = []  
+pca_list = [] 
+# Y_list = []
+for i in range(NL): #NL
+    file_id = []
+    filepath = []
+    filename_list = []
+    feature_list = []
+    target = []
+    
+    for file in os.listdir(gallery_path):
+        if file.endswith('jpg'):
+            # count+=1
+            filename = file.split('.')[0]
+            # print(filename[0])
+            file = os.path.join(gallery_path, file)
+            file_id.append(filename[0])
+            filepath.append(file)
+            filename_list.append(filename)
+    file_id_unique = list(set(file_id))
+    # layer_name = filename + '_layer_' + str(i)
+
+    # layer_path = os.path.join(query_path, layer_name)
+    # if not os.path.exists(layer_path):
+    #     os.makedirs(layer_path)
+    print('Layer No.: ', i)
+    model_layer = Model(inputs = model_1.inputs, outputs = model_1.layers[i].output)
+    # Extracting our features
+    for item1 in file_id_unique:
+        # print(item1)
+        while True:
+            # print(file_id, item1)
+            try:
+                # print(item1)
+                index = file_id.index(item1)
+                # if index is not None:
+                file_id[index] = '-1'
+                file = filepath[index] 
+                filename = filename_list[index]
+                layer_name = filename + '_layer_' + str(i)
+                layer_path = os.path.join(gallery_path, layer_name)
+                # if not os.path.exists(layer_path): # Uncomment these two lines for feature visualization 
+                #     os.makedirs(layer_path)                      
+                image1 = cv2.imread(file)
+                image2 = cv2.cvtColor(image1, cv.COLOR_BGR2RGB)
+                # Resize image to 224x224 size
+                image3 = cv2.resize(image2, (224, 224)).reshape(-1, 224, 224, 3)
+                # We need to preprocess imageto fulfill ResNet50 requirements
+                image = preprocess_input(image3)
+
+                features = model_layer.predict(image)
+                # print(features.shape,"feature shape")
+                n_features = features.shape[-1]
+                # print(n_features, 'No. of features')
+
+                for item in range(n_features):
+                    # print(item, 'Line 83')
+                    # try:
+                    img = features[0, :, :, item]
+                    mean, std = img.mean(), img.std()
+                    # print(mean, std, 'Mean and Standard deviation')
+                    if std==0.0:
+                        # print('Std Dev 0 was encountered')
+                        continue
+                    img = (img - mean)/std
+                    # clip pixel values to [-1,1]
+                    img = np.clip(img, -1.0, 1.0)
+                    # shift from [-1,1] to [0,1] with 0.5 mean
+                    img = 255*(img + 1.0) / 2.0
+                    # confirm it had the desired effect
+                    mean, std = img.mean(), img.std()
+                    # print(img, "positive global feature image")
+                    layer_feature_file = os.path.join(layer_path, str(item))
+                    # print(layer_feature_file + '.jpg')
+                    # cv2.imwrite(layer_feature_file + '.jpg', img)
+                    (row,col) = img.shape
+                    img = np.reshape(img, row*col)
+                    feature_list.append(img)
+                    # print(filename[0])
+                    # target.append(filename[0])
+                    target.append(item1)
+
+            except ValueError as e:
+                # print(e)
+                break
+    feature_list = np.array(feature_list)
+    target = np.array(target)
+    # target = np.reshape(target,(len(target),1)) 
+    print(np.shape(feature_list), np.shape(target), 'Shapes of feature list and target')
+    # define ordinal encoding
+    # encoder = OrdinalEncoder()
+    encoder = LabelEncoder()
+    # encoder = OneHotEncoder(sparse = False)
+    Y = encoder.fit_transform(target)
+    Y = np.reshape(Y,(len(Y),))
+    print(np.shape(Y))
+    # print(Y)
+
+    X_train, X_test, y_train, y_test = train_test_split(feature_list, Y)
+    pca = PCA().fit(X_train)
+    n_comp_hold = np.where(pca.explained_variance_ratio_.cumsum() > 0.95)
+    n_comp_list = list(n_comp_hold)
+    n_comp = len(n_comp_list[0])
+    # n_comp = len(np.where(pca.explained_variance_ratio_.cumsum() > 0.95))
+    print(n_comp, 'No. of PCA components > 95%')
+    pca = PCA(n_components = n_comp).fit(X_train)
+    X_train_pca = pca.transform(X_train)
+    classifier = SVC(probability=True).fit(X_train_pca, y_train)
+    X_test_pca = pca.transform(X_test)
+    predictions = classifier.predict(X_test_pca)
+    print(classification_report(y_test, predictions))
+    classifier_list.append(classifier)
+    pca_list.append(pca)
+
+
 person_count = []
 vehicle_count = []
 avg_Batchcount_person =[]
@@ -62,6 +213,9 @@ def run(
         source,
         queue1,
         queue2,
+        queue3,
+        queue4,
+        queue5,
         yolo_weights=WEIGHTS / '27Sep_2022.pt',  # model.pt path(s),
         reid_weights=WEIGHTS / 'osnet_x0_25_msmt17.pt',  # model.pt path,
         tracking_method='strongsort',
@@ -73,7 +227,7 @@ def run(
         show_vid=False,  # show results
         save_txt=False,  # save results to *.txt
         save_conf=False,  # save confidences in --save-txt labels
-        save_crop=False,  # save cropped prediction boxes
+        save_crop=True,  # save cropped prediction boxes
         save_vid=True,  # save confidences in --save-txt labels
         nosave=False,  # do not save images/videos
         classes=None,  # filter by class: --class 0, or --class 0 2 3
@@ -220,8 +374,58 @@ def run(
                             annotator.box_label(bboxes, label, color=colors(c, True))
                             if save_crop:
                                 txt_file_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
-                                save_one_box(bboxes, imc, file=save_dir / 'crops' / txt_file_name / names[c] / f'{id}' / f'{p.stem}.jpg', BGR=True)
+                                crop_img = save_one_box(bboxes, imc, file=save_dir / 'crops' / txt_file_name / names[c] / f'{id}' / f'{p.stem}.jpg', BGR=True)
+                                
+                                #face-id prediction
+                                image2 = cv2.cvtColor(crop_img, cv.COLOR_BGR2RGB)
+                                # Resize image to 224x224 size
+                                image3 = cv2.resize(image2, (224, 224)).reshape(-1, 224, 224, 3)
+                                # We need to preprocess imageto fulfill ResNet50 requirements
+                                image = preprocess_input(image3)
+                                prediction_list = []
+                                prediction_majority_list = []
+                                # prediction_prob_list = []
+                                for i_1 in range(NL): #NL
+                                    feature_list = []
+                                    # print('Layer No.: ', i)
+                                    model_layer = Model(inputs = model_1.inputs, outputs = model_1.layers[i_1].output)
+                                    features = model_layer.predict(image)
+                                    n_features = features.shape[-1]
 
+                                    for item in range(n_features):
+                                        # print(item, 'Line 83')
+                                        img = features[0, :, :, item]
+                                        mean, std = img.mean(), img.std()
+                                        if std==0.0:
+                                            # print('Std Dev 0 was encountered')
+                                            continue
+                                        img = (img - mean)/std
+                                        # clip pixel values to [-1,1]
+                                        img = np.clip(img, -1.0, 1.0)
+                                        # shift from [-1,1] to [0,1] with 0.5 mean
+                                        img = 255*(img + 1.0) / 2.0
+                                        # confirm it had the desired effect
+                                        mean, std = img.mean(), img.std()
+                                        # print(img, "positive global feature image")
+                                        # layer_feature_file = os.path.join(layer_path, str(item))
+                                        # # print(layer_feature_file + '.jpg')
+                                        # cv2.imwrite(layer_feature_file + '.jpg', img)
+                                        (row,col) = img.shape
+                                        img = np.reshape(img, row*col)
+                                        feature_list.append(img)
+                                    feature_list = np.array(feature_list)
+                                    # print(np.shape(feature_list), 'Shape of feature list')
+                                    X_test_pca = pca_list[i_1].transform(feature_list)
+                                    predictions = classifier_list[i_1].predict(X_test_pca)
+                                    Y_name = encoder.inverse_transform(predictions)
+                                    c = Counter(Y_name)
+                                    value, count = c.most_common()[0]
+                                    prediction_list.append(Y_name)
+                                    prediction_majority_list.append(value)
+                                c = Counter(prediction_majority_list)
+                                value, count = c.most_common()[0]
+                                print(value, 'Majority prediction for: ', f'{id}/{p.stem}.jpg')
+                                
                 LOGGER.info(f'{s}Done. yolo:({t3 - t2:.3f}s), {tracking_method}:({t5 - t4:.3f}s)')
 
             else:
@@ -298,6 +502,15 @@ def run(
 
     queue1.put(avg_Batchcount_person)
     queue2.put(avg_Batchcount_vehicel)
+    queue3.put(detect_count)
+    queue4.put(track_person)
+    queue5.put(track_vehicle)
+
+    avg_Batchcount_person.clear()
+    avg_Batchcount_vehicel.clear()
+    detect_count.clear()
+    track_person.clear()
+    track_vehicle.clear()
 
     # Print results
     t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
