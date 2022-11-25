@@ -53,7 +53,6 @@ from visualization import VideoVisualizer
 import gc
 
 #re-id
-import cv2 as cv
 import matplotlib.pyplot as plt
 
 from matplotlib import gridspec
@@ -247,7 +246,7 @@ async def Activity(source,device_id,source_1):
             gif_imgs = []
             
             for time_stamp in time_stamp_range:    
-                print("Generating predictions for time stamp: {} sec".format(time_stamp))
+                # print("Generating predictions for time stamp: {} sec".format(time_stamp))
                 
                 # Generate clip around the designated time stamps
                 inp_imgs = encoded_vid.get_clip(
@@ -384,6 +383,7 @@ async def BatchJson(source):
         for i in item:
             activity_list_box.append(label_map[i])
         activity_list.append(activity_list_box)
+    os.remove(source)
     return activity_list
           
 async def json_publish(primary):    
@@ -409,7 +409,6 @@ async def Video_creating(path, device_id):
     for image in images:
         video.write(cv2.imread(os.path.join(image_folder, image)))
     video.release()
-    # Process (target = run(source=video_name)).start()
     Process (target = await Activity(source=video_name,device_id=device_id,source_1=video_name)).start() 
     await asyncio.sleep(1)
     
@@ -429,7 +428,7 @@ async def batch_save(device_id,time_stamp):
             if os.path.exists(device_path) is False:
                 os.mkdir(device_path)
             im.save(device_path+"/"+str(count_batch)+".jpeg")
-            print("image save in batch count =",count_batch)
+            # print("image save in batch count =",count_batch)
             await asyncio.sleep(1)
         except TypeError as e:
             print(TypeError," gstreamer error 64 >> ",e,"Device Id",device_id)
@@ -438,10 +437,10 @@ async def batch_save(device_id,time_stamp):
     await asyncio.sleep(1)
     if count_batch >= 10:
         pattern = device_path+"/**/*.jpeg"
-        print(pattern,"patten line 65")
-        print(pattern,"line 71 ", count_batch ,"device id ",device_id)
+        # print(pattern,"patten line 65")
+        # print(pattern,"line 71 ", count_batch ,"device id ",device_id)
         for item in glob.iglob(pattern, recursive=True):
-            print(item,"item 73 line")
+            # print(item,"item 73 line")
             os.remove(item) 
     activity_list = await BatchJson(source="classes.txt")
     metapeople ={
@@ -478,7 +477,7 @@ async def batch_save(device_id,time_stamp):
     Process(target= await json_publish(primary=primary)).start()
     dict_frame[device_id].clear()
     count_frame[device_id] = 0 
-    print(dict_frame[device_id],"entred the loop 237")
+    # print(dict_frame[device_id],"entred the loop 237")
     detect_count.clear()
     avg_Batchcount_person.clear()
     avg_Batchcount_vehicel.clear()
@@ -553,8 +552,8 @@ async def gst_data(device_id ,frame_byte, timestamp):
     # logging.error("The program encountered an error")
     # logging.critical("The program crashed")
 
-# async def gst_stream(device_id, location, device_type):
-async def gst_stream(device_id, location):
+async def gst_stream(device_id, location, device_type):
+# async def gst_stream(device_id, location):
     def gst_to_opencv(sample):
         buf = sample.get_buffer()
         caps = sample.get_caps()
@@ -578,11 +577,11 @@ async def gst_stream(device_id, location):
         return Gst.FlowReturn.OK
 
     try:
-        pipeline = Gst.parse_launch('filesrc location={location} name={device_id} ! decodebin name=decode-{device_id} ! videoconvert name=convert-{device_id} ! videoscale name=scale-{device_id} ! video/x-raw, format=GRAY8, width = 1024, height = 1024 ! appsink name=sink-{device_id}'.format(location=location, device_id=device_id))
-        # if(device_type == "h.264"):
-        #     pipeline = Gst.parse_launch('rtspsrc location={location} name={device_id} ! queue max-size-buffers=2 ! rtph264depay name=depay-{device_id} ! h264parse name=parse-{device_id} ! decodebin name=decode-{device_id} ! videoconvert name=convert-{device_id} ! videoscale name=scale-{device_id} ! video/x-raw, format=GRAY8, width = 512, height = 512 ! appsink name=sink-{device_id}'.format(location=location, device_id=device_id))
-        # elif(device_type == "h.265"):
-        #     pipeline = Gst.parse_launch('rtspsrc location={location} name={device_id} ! queue max-size-buffers=2 ! rtph265depay name=depay-{device_id} ! h265parse name=parse-{device_id} ! decodebin name=decode-{device_id} ! videoconvert name=convert-{device_id} ! videoscale name=scale-{device_id} ! video/x-raw, format=GRAY8, width = 512, height = 512 ! appsink name=sink-{device_id}'.format(location=location, device_id=device_id))
+        # pipeline = Gst.parse_launch('filesrc location={location} name={device_id} ! decodebin name=decode-{device_id} ! videoconvert name=convert-{device_id} ! videoscale name=scale-{device_id} ! video/x-raw, format=GRAY8, width = 1024, height = 1024 ! appsink name=sink-{device_id}'.format(location=location, device_id=device_id))
+        if(device_type == "h.264"):
+            pipeline = Gst.parse_launch('rtspsrc location={location} name={device_id} ! queue max-size-buffers=2 ! rtph264depay name=depay-{device_id} ! h264parse name=parse-{device_id} ! decodebin name=decode-{device_id} ! videoconvert name=convert-{device_id} ! videoscale name=scale-{device_id} ! video/x-raw, format=GRAY8, width = 512, height = 512 ! appsink name=sink-{device_id}'.format(location=location, device_id=device_id))
+        elif(device_type == "h.265"):
+            pipeline = Gst.parse_launch('rtspsrc location={location} name={device_id} ! queue max-size-buffers=2 ! rtph265depay name=depay-{device_id} ! h265parse name=parse-{device_id} ! decodebin name=decode-{device_id} ! videoconvert name=convert-{device_id} ! videoscale name=scale-{device_id} ! video/x-raw, format=GRAY8, width = 512, height = 512 ! appsink name=sink-{device_id}'.format(location=location, device_id=device_id))
 
         sink = pipeline.get_by_name('sink-{device_id}'.format(device_id=device_id))
 
@@ -651,17 +650,17 @@ async def main():
     # Start pipeline
     pipeline.set_state(Gst.State.PLAYING)
 
-    i = "1"
-    stream_url = '/home/nivetheni/Datascienc_pipeline_strongsort/gray_scale.mp4'
+    # i = "1"
+    # stream_url = '/home/nivetheni/Datascienc_pipeline_strongsort/gray_scale.mp4'
 
     # t = Process(target= await gst_stream(device_id=i ,location=stream_url, device_type=device_types[i]))
-    t = Process(target= await gst_stream(device_id=i ,location=stream_url))
-    t.start()
+    # # t = Process(target= await gst_stream(device_id=i ,location=stream_url))
+    # t.start()
 
-    # for i in range(1, 7):
-    #     stream_url = os.getenv('RTSP_URL_{id}'.format(id=i))
-    #     t = Process(target= await gst_stream(device_id=i ,location=stream_url, device_type=device_types[i]))
-    #     t.start()
+    for i in range(1, 7):
+        stream_url = os.getenv('RTSP_URL_{id}'.format(id=i))
+        t = Process(target= await gst_stream(device_id=i ,location=stream_url, device_type=device_types[i]))
+        t.start()
     
     try:
         loop.run()
